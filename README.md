@@ -15,14 +15,16 @@ Bubble Tea terminal code review tool.
 make
 ```
 
+This writes the binary to `bin/cr2`.
+
 ## Run
 
 ```bash
-go run ./cmd/cr
-go run ./cmd/cr --branch
-go run ./cmd/cr --unstaged
-go run ./cmd/cr HEAD~1
-go run ./cmd/cr -o REVIEW.md
+bin/cr2
+bin/cr2 --branch
+bin/cr2 --unstaged
+bin/cr2 HEAD~1
+bin/cr2 -o REVIEW.md
 ```
 
 ## Keys

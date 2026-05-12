@@ -59,27 +59,27 @@ func main() {
 	app := reviewapp.New(repo)
 	ui := tui.New(app, spec, tui.Options{OutputFile: output})
 	if err := ui.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "cr: %v\n", err)
+		fmt.Fprintf(os.Stderr, "cr2: %v\n", err)
 		os.Exit(1)
 	}
 }
 
 func usage() {
-	fmt.Fprintf(flag.CommandLine.Output(), `cr - clean-room code review CLI
+	fmt.Fprintf(flag.CommandLine.Output(), `cr2 - clean-room code review CLI
 
 Usage:
-  cr                     Review current branch or working tree
-  cr --branch            Review branch changes against main/master
-  cr --unstaged          Review unstaged changes
-  cr REV                 Review a commit or revision range
-  cr -o REVIEW.md        Save markdown to REVIEW.md when using save
+  cr2                    Review current branch or working tree
+  cr2 --branch           Review branch changes against main/master
+  cr2 --unstaged         Review unstaged changes
+  cr2 REV                Review a commit or revision range
+  cr2 -o REVIEW.md       Save markdown to REVIEW.md when using save
 
 `)
 	flag.PrintDefaults()
 }
 
 func exitUsage(msg string) {
-	fmt.Fprintf(os.Stderr, "cr: %s\n\n", msg)
+	fmt.Fprintf(os.Stderr, "cr2: %s\n\n", msg)
 	usage()
 	os.Exit(2)
 }

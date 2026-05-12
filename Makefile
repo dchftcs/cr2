@@ -1,4 +1,4 @@
-BINARY := cr
+BINARY := cr2
 CMD := ./cmd/cr
 BUILD_DIR := bin
 BUILD_OUTPUT := $(BUILD_DIR)/$(BINARY)
