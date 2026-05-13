@@ -80,23 +80,26 @@ const (
 )
 
 type model struct {
-	ctx      context.Context
-	app      reviewapp.App
-	opts     Options
-	session  domain.ReviewSession
-	mode     mode
-	view     viewMode
-	lineNums lineNumMode
-	width    int
-	height   int
-	selected int
-	cursor   int
-	scroll   int
-	input    textarea.Model
-	status   string
-	saved    bool
-	count    string
-	search   string
+	ctx           context.Context
+	app           reviewapp.App
+	opts          Options
+	session       domain.ReviewSession
+	mode          mode
+	view          viewMode
+	lineNums      lineNumMode
+	width         int
+	height        int
+	selected      int
+	cursor        int
+	scroll        int
+	input         textarea.Model
+	status        string
+	saved         bool
+	count         string
+	search        string
+	selecting     bool
+	selectAnchor  int
+	commentAnchor domain.CommentAnchor
 }
 
 type stageMsg struct {
@@ -136,10 +139,16 @@ var (
 	headerStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("39"))
-	addStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	delStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
-	hunkStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("141"))
-	commentStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
+	addStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+	delStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
+	hunkStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("141"))
+	commentStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
+	commentEntryStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("230")).
+				Background(lipgloss.Color("236"))
+	commentEntryGutterStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("220")).
+				Background(lipgloss.Color("236"))
 	statusStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	relativeNumStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("230")).
@@ -215,6 +224,11 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	count, hasCount := m.consumeCount(1)
 	switch key {
+	case "esc":
+		if m.selecting {
+			m.selecting = false
+			m.status = "Selection cleared"
+		}
 	case "q", "ctrl+c":
 		return m, tea.Quit
 	case "s":
@@ -279,6 +293,19 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cursorToLine(line)
 	case "ctrl+n":
 		m.cycleLineNumMode()
+	case "v":
+		if line, ok := m.currentSourceLine(); ok {
+			if m.selecting {
+				m.selecting = false
+				m.status = "Selection cleared"
+			} else {
+				m.selecting = true
+				m.selectAnchor = line
+				m.status = fmt.Sprintf("Selection started at line %d", line)
+			}
+		} else {
+			m.status = "Select a source line before starting a range"
+		}
 	case "m":
 		if f, ok := m.currentFile(); ok {
 			read := m.session.ToggleRead(f.Path())
@@ -290,17 +317,19 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "c":
 		if f, ok := m.currentFile(); ok {
-			line := m.currentLine()
-			if line < 1 {
+			anchor, ok := m.currentCommentAnchor(f.Path())
+			if !ok {
 				m.status = "Select a source line before commenting"
 				return m, nil
 			}
 			m.input = textarea.New()
-			m.input.Placeholder = fmt.Sprintf("Comment on %s:%d", f.Path(), line)
+			m.input.Placeholder = "Write review comment..."
 			m.input.ShowLineNumbers = false
 			m.input.SetWidth(max(20, m.width-4))
 			m.input.SetHeight(6)
+			m.commentAnchor = anchor
 			m.mode = modeComment
+			m.ensureInlineEditorVisible()
 			return m, m.input.Focus()
 		}
 	case "R":
@@ -371,19 +400,19 @@ func (m model) updateComment(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.mode = modeNormal
+		m.commentAnchor = domain.CommentAnchor{}
 		return m, nil
 	case "ctrl+s":
 		text := strings.TrimSpace(m.input.Value())
 		if text != "" {
-			if f, ok := m.currentFile(); ok {
-				m.session.AddComment(domain.CommentAnchor{
-					File:      f.Path(),
-					StartLine: m.currentLine(),
-				}, text)
+			if m.commentAnchor.File != "" {
+				m.session.AddComment(m.commentAnchor, text)
 				m.status = "Comment added"
 			}
 		}
 		m.mode = modeNormal
+		m.selecting = false
+		m.commentAnchor = domain.CommentAnchor{}
 		return m, nil
 	default:
 		var cmd tea.Cmd
@@ -446,27 +475,21 @@ func (m model) View() string {
 	if m.mode == modeHelp {
 		return m.helpView()
 	}
-	if m.mode == modeComment || m.mode == modeGeneral || m.mode == modeSearch {
-		title := "Inline Comment"
-		if m.mode == modeGeneral {
-			title = "General Comment"
-		}
-		if m.mode == modeSearch {
-			title = "Search"
-		}
-		controls := "ctrl+s save  esc cancel"
-		if m.mode == modeSearch {
-			controls = "enter search  esc cancel"
-		}
-		return panelStyle.Width(max(20, m.width-2)).Render(
-			headerStyle.Render(title) + "\n\n" +
-				m.input.View() + "\n\n" +
-				statusStyle.Render(controls),
-		)
+	if m.mode == modeSearch {
+		return m.inputPanelView()
 	}
+	if m.mode == modeGeneral {
+		return lipgloss.JoinVertical(lipgloss.Left, m.workspaceView(), m.generalCommentView())
+	}
+	return m.workspaceView()
+}
 
+func (m model) workspaceView() string {
 	header := m.header()
 	bodyHeight := max(6, m.height-lipgloss.Height(header)-2)
+	if m.mode == modeGeneral {
+		bodyHeight = max(6, bodyHeight-lipgloss.Height(m.generalCommentView()))
+	}
 	leftWidth := clamp(28, 44, max(28, m.width/3))
 	rightWidth := max(20, m.width-leftWidth-4)
 	left := panelStyle.Width(leftWidth).Height(bodyHeight).Render(m.fileListView(leftWidth, bodyHeight))
@@ -484,7 +507,13 @@ func (m model) footer() string {
 	if m.status != "" {
 		return m.status
 	}
-	return "j/k move  h/l file  / search  42G line  J/K hunk  Tab view  Ctrl+n nums  c comment  s save  q quit  ? help"
+	if m.mode == modeComment {
+		return "typing inline comment  ctrl+s save  esc cancel"
+	}
+	if m.selecting {
+		return "selection active  j/k move endpoint  c comment range  v clear  esc clear"
+	}
+	return "j/k move  h/l file  / search  42G line  J/K hunk  v select  c comment  s save  q quit  ? help"
 }
 
 func (m model) fileListView(width, height int) string {
@@ -552,10 +581,15 @@ func (m model) diffView(width, height int) string {
 		} else {
 			line = relPrefix + renderTextRow(rows[i], max(1, rowW-visibleWidth(relPrefix)), numW, showAbsolute, m.view == viewSideBySide)
 		}
-		if i == m.cursor {
+		if m.rowInActiveRange(rows[i]) {
+			line = selectedStyle.Width(rowW).Render(stripAnsi(line))
+		} else if i == m.cursor {
 			line = selectedStyle.Width(rowW).Render(stripAnsi(line))
 		}
 		out = append(out, line)
+		if m.mode == modeComment && m.shouldRenderInlineEditor(rows[i]) {
+			out = append(out, m.inlineCommentView(rowW, numW, showAbsolute, m.view == viewSideBySide))
+		}
 	}
 	return strings.Join(out, "\n")
 }
@@ -694,6 +728,7 @@ n/N                next/previous search match
 Tab                toggle side-by-side / unified view
 ctrl+n             cycle line numbers (both/relative/absolute)
 c                  add inline comment at selected source line
+v                  start/clear block selection
 R                  edit general review comment
 ctrl+s             submit comment while editing
 m                  mark selected file read/unread
@@ -710,6 +745,7 @@ func (m *model) moveFile(delta int) {
 	m.selected = clamp(0, len(m.session.Files)-1, m.selected+delta)
 	m.cursor = 0
 	m.scroll = 0
+	m.selecting = false
 }
 
 func (m *model) moveCursor(delta int) {
@@ -855,6 +891,22 @@ func (m *model) ensureCursorVisible() {
 	}
 }
 
+func (m *model) ensureInlineEditorVisible() {
+	height := m.diffHeight()
+	editorHeight := 7
+	if height <= editorHeight+1 {
+		m.ensureCursorVisible()
+		return
+	}
+	maxCursorOffset := height - editorHeight - 1
+	if m.cursor < m.scroll {
+		m.scroll = m.cursor
+	}
+	if m.cursor-m.scroll > maxCursorOffset {
+		m.scroll = max(0, m.cursor-maxCursorOffset)
+	}
+}
+
 func (m model) diffHeight() int {
 	headerHeight := lipgloss.Height(m.header())
 	bodyHeight := max(6, m.height-headerHeight-2)
@@ -882,6 +934,83 @@ func (m model) currentLine() int {
 		return 0
 	}
 	return rows[m.cursor].lineNum
+}
+
+func (m model) currentSourceLine() (int, bool) {
+	rows := m.rows()
+	if m.cursor < 0 || m.cursor >= len(rows) || !rows[m.cursor].isSource() || rows[m.cursor].lineNum < 1 {
+		return 0, false
+	}
+	return rows[m.cursor].lineNum, true
+}
+
+func (m model) currentCommentAnchor(file string) (domain.CommentAnchor, bool) {
+	line, ok := m.currentSourceLine()
+	if !ok {
+		return domain.CommentAnchor{}, false
+	}
+	anchor := domain.CommentAnchor{File: file, StartLine: line}
+	if m.selecting && m.selectAnchor > 0 {
+		anchor.StartLine = m.selectAnchor
+		anchor.EndLine = line
+		if anchor.EndLine < anchor.StartLine {
+			anchor.StartLine, anchor.EndLine = anchor.EndLine, anchor.StartLine
+		}
+		if anchor.EndLine == anchor.StartLine {
+			anchor.EndLine = 0
+		}
+	}
+	return anchor, true
+}
+
+func (m model) activeRange() (string, int, int, bool) {
+	if m.mode == modeComment && m.commentAnchor.File != "" {
+		start := m.commentAnchor.StartLine
+		end := m.commentAnchor.EndLine
+		if end == 0 {
+			end = start
+		}
+		return m.commentAnchor.File, min(start, end), max(start, end), true
+	}
+	if !m.selecting || m.selectAnchor < 1 {
+		return "", 0, 0, false
+	}
+	f, ok := m.currentFile()
+	if !ok {
+		return "", 0, 0, false
+	}
+	line := m.currentLine()
+	if line < 1 {
+		return "", 0, 0, false
+	}
+	return f.Path(), min(m.selectAnchor, line), max(m.selectAnchor, line), true
+}
+
+func (m model) rowInActiveRange(row diffRow) bool {
+	if !row.isSource() || row.lineNum < 1 {
+		return false
+	}
+	f, ok := m.currentFile()
+	if !ok {
+		return false
+	}
+	file, start, end, active := m.activeRange()
+	return active && file == f.Path() && row.lineNum >= start && row.lineNum <= end
+}
+
+func (m model) shouldRenderInlineEditor(row diffRow) bool {
+	if !row.isSource() || row.lineNum < 1 || m.commentAnchor.File == "" {
+		return false
+	}
+	f, ok := m.currentFile()
+	if !ok || f.Path() != m.commentAnchor.File {
+		return false
+	}
+	line := m.commentAnchor.EndLine
+	if line == 0 {
+		line = m.commentAnchor.StartLine
+	}
+	return row.lineNum == line
 }
 
 func (m model) rows() []diffRow {

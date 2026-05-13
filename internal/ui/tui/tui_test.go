@@ -98,6 +98,80 @@ func TestSearchNavigationRepeatsForwardAndBackward(t *testing.T) {
 	}
 }
 
+func TestInlineCommentEditorRendersInsideDiffView(t *testing.T) {
+	m := testModel()
+	m.view = viewUnified
+	m.cursor = 1
+
+	next, _ := m.updateNormal(runeKey("c"))
+	m, ok := next.(model)
+	if !ok {
+		t.Fatalf("updateNormal returned %T", next)
+	}
+	if m.mode != modeComment {
+		t.Fatalf("mode = %v, want comment", m.mode)
+	}
+
+	view := stripAnsi(m.View())
+	if !strings.Contains(view, "@@ -10,3 +10,3 @@ first") {
+		t.Fatalf("comment editor should keep diff visible, view = %q", view)
+	}
+	if !strings.Contains(view, "ctrl+s save  esc cancel") {
+		t.Fatalf("comment editor controls missing from inline view = %q", view)
+	}
+}
+
+func TestGeneralCommentViewKeepsWorkspaceVisible(t *testing.T) {
+	m := testModel()
+	m.view = viewUnified
+
+	next, _ := m.updateNormal(runeKey("R"))
+	m, ok := next.(model)
+	if !ok {
+		t.Fatalf("updateNormal returned %T", next)
+	}
+	if m.mode != modeGeneral {
+		t.Fatalf("mode = %v, want general", m.mode)
+	}
+
+	view := stripAnsi(m.View())
+	for _, want := range []string{"a.go", "@@ -10,3 +10,3 @@ first", "General Comment"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("general comment view missing %q in %q", want, view)
+		}
+	}
+}
+
+func TestBlockSelectionCreatesRangeComment(t *testing.T) {
+	m := testModel()
+	m.view = viewUnified
+	m.cursor = 1
+
+	m = pressKeys(t, m, "v", "j")
+	next, _ := m.updateNormal(runeKey("c"))
+	m, ok := next.(model)
+	if !ok {
+		t.Fatalf("updateNormal returned %T", next)
+	}
+	m.input.SetValue("range comment")
+
+	next, _ = m.updateComment(specialKey(tea.KeyCtrlS))
+	m, ok = next.(model)
+	if !ok {
+		t.Fatalf("updateComment returned %T", next)
+	}
+	if len(m.session.Comments) != 1 {
+		t.Fatalf("comments = %d, want 1", len(m.session.Comments))
+	}
+	got := m.session.Comments[0].Anchor
+	if got.File != "a.go" || got.StartLine != 10 || got.EndLine != 11 {
+		t.Fatalf("anchor = %#v, want a.go:10-11", got)
+	}
+	if m.selecting {
+		t.Fatal("selection should clear after saving range comment")
+	}
+}
+
 func TestUnifiedLineNumberGutter(t *testing.T) {
 	added := stripAnsi(renderTextRow(diffRow{
 		kind:    rowKindUnified,
@@ -231,6 +305,10 @@ func pressKeys(t *testing.T, m model, keys ...string) model {
 
 func runeKey(s string) tea.KeyMsg {
 	return tea.KeyMsg(tea.Key{Type: tea.KeyRunes, Runes: []rune(s)})
+}
+
+func specialKey(t tea.KeyType) tea.KeyMsg {
+	return tea.KeyMsg(tea.Key{Type: t})
 }
 
 func testModel() model {

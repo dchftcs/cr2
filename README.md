@@ -41,9 +41,10 @@ bin/cr2 -o REVIEW.md
 | `Tab` | Toggle side-by-side/unified diff view |
 | `Ctrl+n` | Cycle line numbers between both, relative-only, and absolute-only |
 | `c` | Add inline comment at the selected line |
+| `v` | Start/clear a block selection for a range comment |
 | `R` | Edit general review comment |
 | `Ctrl+s` | Submit a comment while editing |
-| `Esc` | Cancel comment/help |
+| `Esc` | Cancel comment/help/selection |
 | `m` | Mark selected file read/unread |
 | `a` | Stage/unstage selected file |
 | `s` | Save review and exit |

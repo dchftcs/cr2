@@ -90,6 +90,7 @@ The terminal UI is Bubble Tea based. It currently has a split file-list/diff vie
 - `Tab`: toggle side-by-side/unified diff view
 - `Ctrl+n`: cycle line numbers between both, relative-only, and absolute-only
 - `c`: add an inline comment at the selected line
+- `v`: start/clear a block selection for a range comment
 - `R`: edit the review-level comment
 - `Ctrl+s`: submit comment while editing
 - `m`: mark selected file read/unread
