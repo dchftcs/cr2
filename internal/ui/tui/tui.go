@@ -12,6 +12,7 @@ import (
 
 type Options struct {
 	OutputFile string
+	Stdout     bool
 }
 
 type UI struct {
@@ -39,7 +40,7 @@ func (ui UI) Run(ctx context.Context) error {
 		return nil
 	}
 	md := export.Markdown(fm.session)
-	if fm.opts.OutputFile == "" {
+	if fm.opts.Stdout {
 		fmt.Print(md)
 		return nil
 	}

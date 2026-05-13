@@ -14,17 +14,23 @@ import (
 func main() {
 	var (
 		output   string
+		stdout   bool
 		branch   bool
 		unstaged bool
 	)
-	flag.StringVar(&output, "output", "", "write review markdown to file on save")
-	flag.StringVar(&output, "o", "", "write review markdown to file on save")
+	flag.StringVar(&output, "output", "REVIEW.md", "write review markdown to file on save (default REVIEW.md)")
+	flag.StringVar(&output, "o", "REVIEW.md", "write review markdown to file on save (default REVIEW.md)")
+	flag.BoolVar(&stdout, "stdout", false, "write review markdown to stdout instead of file")
 	flag.BoolVar(&branch, "branch", false, "diff current branch against main/master")
 	flag.BoolVar(&branch, "b", false, "diff current branch against main/master")
 	flag.BoolVar(&unstaged, "unstaged", false, "review only unstaged tracked changes plus untracked files")
 	flag.BoolVar(&unstaged, "u", false, "review only unstaged tracked changes plus untracked files")
 	flag.Usage = usage
 	flag.Parse()
+
+	if stdout && output != "REVIEW.md" {
+		exitUsage("--stdout cannot be combined with --output")
+	}
 
 	if unstaged && branch {
 		exitUsage("--unstaged cannot be combined with --branch")
@@ -57,7 +63,7 @@ func main() {
 	}
 
 	app := reviewapp.New(repo)
-	ui := tui.New(app, spec, tui.Options{OutputFile: output})
+	ui := tui.New(app, spec, tui.Options{OutputFile: output, Stdout: stdout})
 	if err := ui.Run(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "cr2: %v\n", err)
 		os.Exit(1)
@@ -68,11 +74,12 @@ func usage() {
 	fmt.Fprintf(flag.CommandLine.Output(), `cr2 - clean-room code review CLI
 
 Usage:
-  cr2                    Review current branch or working tree
+  cr2                    Review current branch or working tree (saves to REVIEW.md)
   cr2 --branch           Review branch changes against main/master
   cr2 --unstaged         Review unstaged changes
   cr2 REV                Review a commit or revision range
-  cr2 -o REVIEW.md       Save markdown to REVIEW.md when using save
+  cr2 -o output.md       Save markdown to output.md when using save
+  cr2 --stdout           Write review markdown to stdout instead of file
 
 `)
 	flag.PrintDefaults()
