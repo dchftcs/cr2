@@ -60,7 +60,23 @@ const (
 	modeNormal mode = iota
 	modeComment
 	modeGeneral
+	modeSearch
 	modeHelp
+)
+
+type viewMode int
+
+const (
+	viewSideBySide viewMode = iota
+	viewUnified
+)
+
+type lineNumMode int
+
+const (
+	lineNumBoth lineNumMode = iota
+	lineNumRelativeOnly
+	lineNumAbsoluteOnly
 )
 
 type model struct {
@@ -69,6 +85,8 @@ type model struct {
 	opts     Options
 	session  domain.ReviewSession
 	mode     mode
+	view     viewMode
+	lineNums lineNumMode
 	width    int
 	height   int
 	selected int
@@ -77,6 +95,8 @@ type model struct {
 	input    textarea.Model
 	status   string
 	saved    bool
+	count    string
+	search   string
 }
 
 type stageMsg struct {
@@ -85,8 +105,22 @@ type stageMsg struct {
 	err     error
 }
 
+type diffRowKind int
+
+const (
+	rowKindHunk diffRowKind = iota
+	rowKindUnified
+	rowKindPair
+	rowKindComment
+)
+
 type diffRow struct {
+	kind    diffRowKind
 	text    string
+	left    *domain.Line
+	right   *domain.Line
+	oldLine int
+	newLine int
 	lineNum int
 	op      domain.LineOp
 	comment *domain.Comment
@@ -102,11 +136,21 @@ var (
 	headerStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("39"))
-	addStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	delStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
-	hunkStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("141"))
-	commentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
-	statusStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	addStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+	delStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
+	hunkStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("141"))
+	commentStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
+	statusStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	relativeNumStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("230")).
+				Background(lipgloss.Color("238")).
+				Width(3).
+				Align(lipgloss.Right)
+)
+
+const (
+	minLineNumberWidth = 5
+	relativeNumWidth   = 3
 )
 
 func newModel(ctx context.Context, app reviewapp.App, session domain.ReviewSession, opts Options) model {
@@ -149,6 +193,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateComment(msg)
 		case modeGeneral:
 			return m.updateGeneral(msg)
+		case modeSearch:
+			return m.updateSearch(msg)
 		case modeHelp:
 			if msg.String() == "esc" || msg.String() == "q" || msg.String() == "?" {
 				m.mode = modeNormal
@@ -163,7 +209,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.status = ""
-	switch msg.String() {
+	key := msg.String()
+	if m.appendCount(key) {
+		return m, nil
+	}
+	count, hasCount := m.consumeCount(1)
+	switch key {
 	case "q", "ctrl+c":
 		return m, tea.Quit
 	case "s":
@@ -171,24 +222,63 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "?":
 		m.mode = modeHelp
+	case "/":
+		m.input = textarea.New()
+		m.input.Placeholder = "Search diff"
+		m.input.ShowLineNumbers = false
+		m.input.SetWidth(max(20, m.width-4))
+		m.input.SetHeight(1)
+		m.input.SetValue(m.search)
+		m.mode = modeSearch
+		return m, m.input.Focus()
+	case "n":
+		m.repeatSearch(count)
+	case "N":
+		m.repeatSearch(-count)
 	case "j", "down":
-		m.moveCursor(1)
+		m.moveCursor(count)
 	case "k", "up":
-		m.moveCursor(-1)
-	case "pgdown", "ctrl+f":
-		m.moveCursor(max(1, m.diffHeight()-2))
+		m.moveCursor(-count)
+	case "pgdown", "ctrl+f", " ":
+		m.moveCursor(count * m.pageStep())
 	case "pgup", "ctrl+b":
-		m.moveCursor(-max(1, m.diffHeight()-2))
+		m.moveCursor(-count * m.pageStep())
+	case "ctrl+d":
+		m.moveCursor(count * m.halfPageStep())
+	case "ctrl+u":
+		m.moveCursor(-count * m.halfPageStep())
 	case "G":
-		m.cursor = max(0, len(m.rows())-1)
-		m.ensureCursorVisible()
-	case "g":
-		m.cursor = 0
-		m.ensureCursorVisible()
-	case "]", "right":
-		m.moveFile(1)
-	case "[", "left":
-		m.moveFile(-1)
+		if hasCount {
+			m.jumpToLine(count)
+		} else {
+			m.jumpBottom()
+		}
+	case "g", "home":
+		if hasCount {
+			m.jumpToLine(count)
+		} else {
+			m.jumpTop()
+		}
+	case "end":
+		m.jumpBottom()
+	case "J", "}":
+		m.moveHunk(count)
+	case "K", "{":
+		m.moveHunk(-count)
+	case "]", "right", "l":
+		m.moveFile(count)
+	case "[", "left", "h":
+		m.moveFile(-count)
+	case "tab":
+		line := m.currentLine()
+		if m.view == viewSideBySide {
+			m.view = viewUnified
+		} else {
+			m.view = viewSideBySide
+		}
+		m.cursorToLine(line)
+	case "ctrl+n":
+		m.cycleLineNumMode()
 	case "m":
 		if f, ok := m.currentFile(); ok {
 			read := m.session.ToggleRead(f.Path())
@@ -224,6 +314,57 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.input.Focus()
 	}
 	return m, nil
+}
+
+func (m *model) appendCount(key string) bool {
+	if len(key) != 1 || key[0] < '0' || key[0] > '9' {
+		return false
+	}
+	if key == "0" && m.count == "" {
+		return false
+	}
+	if len(m.count) < 6 {
+		m.count += key
+	}
+	m.status = "count: " + m.count
+	return true
+}
+
+func (m *model) consumeCount(defaultValue int) (int, bool) {
+	if m.count == "" {
+		return defaultValue, false
+	}
+	n := 0
+	for _, r := range m.count {
+		n = n*10 + int(r-'0')
+	}
+	m.count = ""
+	if n < 1 {
+		return defaultValue, false
+	}
+	return n, true
+}
+
+func (m *model) cycleLineNumMode() {
+	switch m.lineNums {
+	case lineNumBoth:
+		m.lineNums = lineNumRelativeOnly
+		m.status = "Line numbers: relative"
+	case lineNumRelativeOnly:
+		m.lineNums = lineNumAbsoluteOnly
+		m.status = "Line numbers: absolute"
+	case lineNumAbsoluteOnly:
+		m.lineNums = lineNumBoth
+		m.status = "Line numbers: relative + absolute"
+	}
+}
+
+func (m model) showRelativeLineNums() bool {
+	return m.lineNums == lineNumBoth || m.lineNums == lineNumRelativeOnly
+}
+
+func (m model) showAbsoluteLineNums() bool {
+	return m.lineNums == lineNumBoth || m.lineNums == lineNumAbsoluteOnly
 }
 
 func (m model) updateComment(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -268,6 +409,29 @@ func (m model) updateGeneral(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
+func (m model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.mode = modeNormal
+		return m, nil
+	case "enter", "ctrl+s":
+		query := strings.TrimSpace(m.input.Value())
+		m.mode = modeNormal
+		if query == "" {
+			return m, nil
+		}
+		m.search = query
+		if !m.findNextSearchMatch(1) {
+			m.status = "No matches for " + query
+		}
+		return m, nil
+	default:
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		return m, cmd
+	}
+}
+
 func (m model) toggleStageCmd(path string) tea.Cmd {
 	session := m.session
 	app := m.app
@@ -282,15 +446,22 @@ func (m model) View() string {
 	if m.mode == modeHelp {
 		return m.helpView()
 	}
-	if m.mode == modeComment || m.mode == modeGeneral {
+	if m.mode == modeComment || m.mode == modeGeneral || m.mode == modeSearch {
 		title := "Inline Comment"
 		if m.mode == modeGeneral {
 			title = "General Comment"
 		}
+		if m.mode == modeSearch {
+			title = "Search"
+		}
+		controls := "ctrl+s save  esc cancel"
+		if m.mode == modeSearch {
+			controls = "enter search  esc cancel"
+		}
 		return panelStyle.Width(max(20, m.width-2)).Render(
 			headerStyle.Render(title) + "\n\n" +
 				m.input.View() + "\n\n" +
-				statusStyle.Render("ctrl+s save  esc cancel"),
+				statusStyle.Render(controls),
 		)
 	}
 
@@ -313,7 +484,7 @@ func (m model) footer() string {
 	if m.status != "" {
 		return m.status
 	}
-	return "j/k move  ]/[ file  c comment  R general  m read  a stage  s save  ? help  q quit"
+	return "j/k move  h/l file  / search  42G line  J/K hunk  Tab view  Ctrl+n nums  c comment  s save  q quit  ? help"
 }
 
 func (m model) fileListView(width, height int) string {
@@ -321,7 +492,10 @@ func (m model) fileListView(width, height int) string {
 		return "No changes."
 	}
 	var lines []string
-	for i, f := range m.session.Files {
+	start := fileListStart(m.selected, len(m.session.Files), height)
+	end := min(len(m.session.Files), start+height)
+	for i := start; i < end; i++ {
+		f := m.session.Files[i]
 		flags := "   "
 		if m.session.ReadFiles[f.Path()] {
 			flags = replaceAt(flags, 0, 'x')
@@ -339,7 +513,7 @@ func (m model) fileListView(width, height int) string {
 		}
 		lines = append(lines, line)
 	}
-	return strings.Join(limit(lines, height), "\n")
+	return strings.Join(lines, "\n")
 }
 
 func (m model) diffView(width, height int) string {
@@ -354,37 +528,172 @@ func (m model) diffView(width, height int) string {
 	m.ensureCursorVisible()
 	start := clamp(0, max(0, len(rows)-1), m.scroll)
 	end := min(len(rows), start+height-2)
-	var out []string
-	out = append(out, headerStyle.Render(truncate(f.Path(), width-2)))
+	rowW := max(1, width-2)
+	header := truncate(f.Path(), rowW)
+	if m.view == viewSideBySide {
+		header += "  " + statusStyle.Render("(before │ after)")
+	}
+	numW := absoluteLineNumberWidth(f)
+	showRelative := m.showRelativeLineNums()
+	showAbsolute := m.showAbsoluteLineNums()
+	var ordinals []int
+	if showRelative {
+		ordinals = rowOrdinals(rows)
+	}
+	out := []string{headerStyle.Render(header)}
 	for i := start; i < end; i++ {
-		row := rows[i]
-		line := truncate(row.text, width-2)
-		switch {
-		case row.comment != nil:
-			line = commentStyle.Render(line)
-		case strings.HasPrefix(row.text, "@@"):
-			line = hunkStyle.Render(line)
-		case row.op == domain.LineInsert:
-			line = addStyle.Render(line)
-		case row.op == domain.LineDelete:
-			line = delStyle.Render(line)
+		relPrefix := ""
+		if showRelative {
+			relPrefix = relativeNumStyle.Render(relativeLineNumber(rows, ordinals, i, m.cursor)) + " "
+		}
+		var line string
+		if rows[i].kind == rowKindPair {
+			line = renderPair(rows[i], rowW, numW, showAbsolute, relPrefix)
+		} else {
+			line = relPrefix + renderTextRow(rows[i], max(1, rowW-visibleWidth(relPrefix)), numW, showAbsolute, m.view == viewSideBySide)
 		}
 		if i == m.cursor {
-			line = selectedStyle.Width(max(1, width-2)).Render(line)
+			line = selectedStyle.Width(rowW).Render(stripAnsi(line))
 		}
 		out = append(out, line)
 	}
 	return strings.Join(out, "\n")
 }
 
+func renderTextRow(row diffRow, width, numW int, showAbsolute bool, sideBySide bool) string {
+	var line string
+	switch row.kind {
+	case rowKindUnified:
+		text := expandTabs(row.text, 4)
+		prefix := " "
+		if row.op == domain.LineInsert {
+			prefix = "+"
+		}
+		if row.op == domain.LineDelete {
+			prefix = "-"
+		}
+		if showAbsolute {
+			line = truncate(fmt.Sprintf("%*s %*s %s %s",
+				numW, lineNumber(row.oldLine),
+				numW, lineNumber(row.newLine),
+				prefix,
+				text,
+			), width)
+		} else {
+			line = truncate(fmt.Sprintf("%s %s", prefix, text), width)
+		}
+	case rowKindComment:
+		gutter := strings.Repeat(" ", textIndent(numW, showAbsolute, sideBySide))
+		line = truncate(gutter+"> "+firstLine(row.text), width)
+		return commentStyle.Render(line)
+	case rowKindHunk:
+		gutter := strings.Repeat(" ", textIndent(numW, showAbsolute, sideBySide))
+		line = truncate(gutter+row.text, width)
+		return hunkStyle.Render(line)
+	default:
+		line = truncate(row.text, width)
+	}
+	switch row.op {
+	case domain.LineInsert:
+		return addStyle.Render(line)
+	case domain.LineDelete:
+		return delStyle.Render(line)
+	}
+	return line
+}
+
+func renderPair(row diffRow, width, numW int, showAbsolute bool, relPrefix string) string {
+	sep := statusStyle.Render("│")
+	relW := visibleWidth(relPrefix)
+	columnBudget := max(2, width-1-(2*relW))
+	leftW := max(1, columnBudget/2)
+	rightW := max(1, columnBudget-leftW)
+	left := renderSide(row.left, leftW, true, numW, showAbsolute)
+	right := renderSide(row.right, rightW, false, numW, showAbsolute)
+	return relPrefix + left + sep + relPrefix + right
+}
+
+func renderSide(line *domain.Line, width int, isLeft bool, numW int, showAbsolute bool) string {
+	if line == nil {
+		if showAbsolute {
+			return padOrTruncate(sideNumberGutter("", numW), width)
+		}
+		return strings.Repeat(" ", width)
+	}
+	var cell string
+	if showAbsolute {
+		num := line.OldNum
+		if !isLeft {
+			num = line.NewNum
+		}
+		gutter := sideNumberGutter(lineNumber(num), numW)
+		text := truncate(expandTabs(line.Content, 4), max(1, width-visibleWidth(gutter)))
+		cell = gutter + text
+	} else {
+		cell = truncate(expandTabs(line.Content, 4), width)
+	}
+	cell = padOrTruncate(cell, width)
+	switch line.Op {
+	case domain.LineInsert:
+		return addStyle.Render(cell)
+	case domain.LineDelete:
+		return delStyle.Render(cell)
+	}
+	return cell
+}
+
+func padOrTruncate(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	rs := []rune(s)
+	if len(rs) > width {
+		if width == 1 {
+			return string(rs[:1])
+		}
+		return string(rs[:width-1]) + "…"
+	}
+	if len(rs) < width {
+		return s + strings.Repeat(" ", width-len(rs))
+	}
+	return s
+}
+
+func stripAnsi(s string) string {
+	var b strings.Builder
+	i := 0
+	for i < len(s) {
+		if s[i] == '\x1b' && i+1 < len(s) && s[i+1] == '[' {
+			j := i + 2
+			for j < len(s) && !((s[j] >= 'A' && s[j] <= 'Z') || (s[j] >= 'a' && s[j] <= 'z')) {
+				j++
+			}
+			if j < len(s) {
+				j++
+			}
+			i = j
+			continue
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
+}
+
 func (m model) helpView() string {
 	return panelStyle.Width(max(20, m.width-2)).Render(`cr keys
 
-j/k, up/down       move in diff
+j/k, up/down       move in diff; counts work, e.g. 5j
+ctrl+d/ctrl+u      half page down/up
 PgUp/PgDn          page diff
-g/G                top/bottom
-]/[, left/right    next/previous file
-c                  add inline comment at selected line
+g/G, Home/End      top/bottom; count+G jumps to source line
+J/K, }/{           next/previous hunk
+h/l, ]/[, arrows   previous/next file; counts work
+/                  search diff
+n/N                next/previous search match
+Tab                toggle side-by-side / unified view
+ctrl+n             cycle line numbers (both/relative/absolute)
+c                  add inline comment at selected source line
 R                  edit general review comment
 ctrl+s             submit comment while editing
 m                  mark selected file read/unread
@@ -412,6 +721,130 @@ func (m *model) moveCursor(delta int) {
 	m.ensureCursorVisible()
 }
 
+func (m *model) jumpTop() {
+	m.cursor = 0
+	m.ensureCursorVisible()
+}
+
+func (m *model) jumpBottom() {
+	m.cursor = max(0, len(m.rows())-1)
+	m.ensureCursorVisible()
+}
+
+func (m *model) jumpToLine(target int) {
+	rows := m.rows()
+	if len(rows) == 0 || target < 1 {
+		return
+	}
+	best := -1
+	lastSource := -1
+	for i, row := range rows {
+		if !row.isSource() {
+			continue
+		}
+		lastSource = i
+		if row.newLine == target {
+			m.cursor = i
+			m.ensureCursorVisible()
+			return
+		}
+		if best == -1 && row.lineNum > target {
+			best = i
+		}
+	}
+	for i, row := range rows {
+		if !row.isSource() {
+			continue
+		}
+		if row.oldLine == target || row.lineNum == target {
+			m.cursor = i
+			m.ensureCursorVisible()
+			return
+		}
+	}
+	if best == -1 {
+		best = lastSource
+	}
+	if best == -1 {
+		best = 0
+	}
+	m.cursor = best
+	m.ensureCursorVisible()
+}
+
+func (m *model) moveHunk(delta int) {
+	rows := m.rows()
+	if len(rows) == 0 || delta == 0 {
+		return
+	}
+	step := 1
+	if delta < 0 {
+		step = -1
+		delta = -delta
+	}
+	pos := m.cursor
+	for delta > 0 {
+		next := -1
+		for i := pos + step; i >= 0 && i < len(rows); i += step {
+			if rows[i].kind == rowKindHunk {
+				next = i
+				break
+			}
+		}
+		if next < 0 {
+			break
+		}
+		pos = next
+		delta--
+	}
+	m.cursor = clamp(0, len(rows)-1, pos)
+	m.ensureCursorVisible()
+}
+
+func (m *model) repeatSearch(delta int) {
+	if strings.TrimSpace(m.search) == "" {
+		m.status = "No search query"
+		return
+	}
+	step := 1
+	if delta < 0 {
+		step = -1
+		delta = -delta
+	}
+	for i := 0; i < delta; i++ {
+		if !m.findNextSearchMatch(step) {
+			m.status = "No matches for " + m.search
+			return
+		}
+	}
+}
+
+func (m *model) findNextSearchMatch(step int) bool {
+	rows := m.rows()
+	if len(rows) == 0 {
+		return false
+	}
+	query := strings.ToLower(strings.TrimSpace(m.search))
+	if query == "" {
+		return false
+	}
+	if step >= 0 {
+		step = 1
+	} else {
+		step = -1
+	}
+	for offset := 1; offset <= len(rows); offset++ {
+		i := mod(m.cursor+step*offset, len(rows))
+		if strings.Contains(strings.ToLower(rows[i].searchText()), query) {
+			m.cursor = i
+			m.ensureCursorVisible()
+			m.status = ""
+			return true
+		}
+	}
+	return false
+}
+
 func (m *model) ensureCursorVisible() {
 	height := m.diffHeight()
 	if m.cursor < m.scroll {
@@ -423,7 +856,17 @@ func (m *model) ensureCursorVisible() {
 }
 
 func (m model) diffHeight() int {
-	return max(1, m.height-5)
+	headerHeight := lipgloss.Height(m.header())
+	bodyHeight := max(6, m.height-headerHeight-2)
+	return max(1, bodyHeight-2)
+}
+
+func (m model) pageStep() int {
+	return max(1, m.diffHeight()-1)
+}
+
+func (m model) halfPageStep() int {
+	return max(1, m.diffHeight()/2)
 }
 
 func (m model) currentFile() (domain.FileChange, bool) {
@@ -447,39 +890,165 @@ func (m model) rows() []diffRow {
 		return nil
 	}
 	comments := commentsByLine(m.session.Comments, f.Path())
+	if m.view == viewSideBySide {
+		return sideBySideRows(f, comments)
+	}
+	return unifiedRows(f, comments)
+}
+
+func unifiedRows(f domain.FileChange, comments map[int][]domain.Comment) []diffRow {
 	var rows []diffRow
 	for _, h := range f.Hunks {
 		rows = append(rows, diffRow{
+			kind: rowKindHunk,
 			text: fmt.Sprintf("@@ -%d,%d +%d,%d @@ %s", h.OldStart, h.OldCount, h.NewStart, h.NewCount, h.Section),
 		})
 		for _, line := range h.Lines {
-			prefix := " "
 			num := line.NewNum
 			if line.Op == domain.LineDelete {
-				prefix = "-"
 				num = line.OldNum
 			}
-			if line.Op == domain.LineInsert {
-				prefix = "+"
-			}
 			rows = append(rows, diffRow{
-				text:    fmt.Sprintf("%s%5d %s", prefix, num, line.Content),
+				kind:    rowKindUnified,
+				text:    line.Content,
+				oldLine: line.OldNum,
+				newLine: line.NewNum,
 				lineNum: num,
 				op:      line.Op,
 			})
 			if line.Op != domain.LineDelete {
-				for _, comment := range comments[num] {
-					c := comment
-					rows = append(rows, diffRow{
-						text:    "      > " + firstLine(comment.Text),
-						lineNum: num,
-						comment: &c,
-					})
-				}
+				rows = appendCommentRows(rows, comments[num], num)
 			}
 		}
 	}
 	return rows
+}
+
+func sideBySideRows(f domain.FileChange, comments map[int][]domain.Comment) []diffRow {
+	var rows []diffRow
+	for _, h := range f.Hunks {
+		rows = append(rows, diffRow{
+			kind: rowKindHunk,
+			text: fmt.Sprintf("@@ -%d,%d +%d,%d @@ %s", h.OldStart, h.OldCount, h.NewStart, h.NewCount, h.Section),
+		})
+		for _, p := range pairLines(h.Lines) {
+			num := 0
+			op := domain.LineContext
+			oldLine := 0
+			newLine := 0
+			if p.right != nil {
+				num = p.right.NewNum
+				newLine = p.right.NewNum
+				op = p.right.Op
+			} else if p.left != nil {
+				num = p.left.OldNum
+				op = p.left.Op
+			}
+			if p.left != nil {
+				oldLine = p.left.OldNum
+				if newLine == 0 && p.left.NewNum > 0 {
+					newLine = p.left.NewNum
+				}
+			}
+			rows = append(rows, diffRow{
+				kind:    rowKindPair,
+				left:    p.left,
+				right:   p.right,
+				oldLine: oldLine,
+				newLine: newLine,
+				lineNum: num,
+				op:      op,
+			})
+			rows = appendCommentRows(rows, comments[num], num)
+		}
+	}
+	return rows
+}
+
+func appendCommentRows(rows []diffRow, cs []domain.Comment, num int) []diffRow {
+	for _, c := range cs {
+		cc := c
+		rows = append(rows, diffRow{
+			kind:    rowKindComment,
+			text:    c.Text,
+			newLine: num,
+			lineNum: num,
+			comment: &cc,
+		})
+	}
+	return rows
+}
+
+type linePair struct {
+	left  *domain.Line
+	right *domain.Line
+}
+
+// pairLines groups a flat hunk line list into before/after pairs. Context lines
+// appear on both sides. Runs of deletes followed by inserts are zipped together
+// so corresponding before/after rows render on the same screen line.
+func pairLines(lines []domain.Line) []linePair {
+	var pairs []linePair
+	i := 0
+	for i < len(lines) {
+		if lines[i].Op == domain.LineContext {
+			l := lines[i]
+			pairs = append(pairs, linePair{left: &l, right: &l})
+			i++
+			continue
+		}
+		delStart := i
+		for i < len(lines) && lines[i].Op == domain.LineDelete {
+			i++
+		}
+		insStart := i
+		for i < len(lines) && lines[i].Op == domain.LineInsert {
+			i++
+		}
+		deletes := lines[delStart:insStart]
+		inserts := lines[insStart:i]
+		n := len(deletes)
+		if len(inserts) > n {
+			n = len(inserts)
+		}
+		for k := 0; k < n; k++ {
+			var lp linePair
+			if k < len(deletes) {
+				d := deletes[k]
+				lp.left = &d
+			}
+			if k < len(inserts) {
+				ins := inserts[k]
+				lp.right = &ins
+			}
+			pairs = append(pairs, lp)
+		}
+		if n == 0 {
+			// Defensive: a non-context line we didn't classify; skip it.
+			i++
+		}
+	}
+	return pairs
+}
+
+// cursorToLine snaps the cursor to the first row whose lineNum matches.
+// Used when toggling view modes so the cursor stays on the same source line.
+func (m *model) cursorToLine(line int) {
+	if line < 1 {
+		m.cursor = 0
+		m.scroll = 0
+		return
+	}
+	rows := m.rows()
+	for i, r := range rows {
+		if r.lineNum == line {
+			m.cursor = i
+			m.ensureCursorVisible()
+			return
+		}
+	}
+	m.cursor = clamp(0, max(0, len(rows)-1), m.cursor)
+	m.ensureCursorVisible()
 }
 
 func commentsByLine(comments []domain.Comment, file string) map[int][]domain.Comment {
@@ -495,6 +1064,150 @@ func commentsByLine(comments []domain.Comment, file string) map[int][]domain.Com
 		out[line] = append(out[line], c)
 	}
 	return out
+}
+
+func (r diffRow) isSource() bool {
+	return r.kind == rowKindUnified || r.kind == rowKindPair
+}
+
+func (r diffRow) searchText() string {
+	switch r.kind {
+	case rowKindPair:
+		var parts []string
+		if r.left != nil {
+			parts = append(parts, r.left.Content)
+		}
+		if r.right != nil {
+			parts = append(parts, r.right.Content)
+		}
+		return strings.Join(parts, "\n")
+	default:
+		return r.text
+	}
+}
+
+func lineNumberWidth(f domain.FileChange) int {
+	maxLine := 0
+	for _, h := range f.Hunks {
+		if h.OldStart+h.OldCount-1 > maxLine {
+			maxLine = h.OldStart + h.OldCount - 1
+		}
+		if h.NewStart+h.NewCount-1 > maxLine {
+			maxLine = h.NewStart + h.NewCount - 1
+		}
+		for _, line := range h.Lines {
+			if line.OldNum > maxLine {
+				maxLine = line.OldNum
+			}
+			if line.NewNum > maxLine {
+				maxLine = line.NewNum
+			}
+		}
+	}
+	if maxLine < 1 {
+		return 1
+	}
+	width := 0
+	for maxLine > 0 {
+		width++
+		maxLine /= 10
+	}
+	if width < 2 {
+		return 2
+	}
+	return width
+}
+
+func absoluteLineNumberWidth(f domain.FileChange) int {
+	return max(minLineNumberWidth, lineNumberWidth(f))
+}
+
+func textIndent(numW int, showAbsolute bool, sideBySide bool) int {
+	if !showAbsolute {
+		return 2
+	}
+	if sideBySide {
+		return sideNumberGutterWidth(numW)
+	}
+	return numW*2 + 4
+}
+
+func sideNumberGutterWidth(numW int) int {
+	return numW + visibleWidth(" │ ")
+}
+
+func sideNumberGutter(num string, numW int) string {
+	return fmt.Sprintf("%*s │ ", numW, num)
+}
+
+func expandTabs(s string, tabStop int) string {
+	if tabStop < 1 || !strings.ContainsRune(s, '\t') {
+		return s
+	}
+	var b strings.Builder
+	col := 0
+	for _, r := range s {
+		if r == '\t' {
+			spaces := tabStop - col%tabStop
+			b.WriteString(strings.Repeat(" ", spaces))
+			col += spaces
+			continue
+		}
+		b.WriteRune(r)
+		col++
+	}
+	return b.String()
+}
+
+func rowOrdinals(rows []diffRow) []int {
+	ordinals := make([]int, len(rows))
+	ordinal := 0
+	for i, row := range rows {
+		if row.isSource() {
+			ordinal++
+		}
+		ordinals[i] = ordinal
+	}
+	return ordinals
+}
+
+func relativeLineNumber(rows []diffRow, ordinals []int, rowIdx, cursorIdx int) string {
+	if rowIdx < 0 || rowIdx >= len(rows) || rows[rowIdx].kind == rowKindHunk {
+		return strings.Repeat(" ", relativeNumWidth)
+	}
+	if rowIdx == cursorIdx {
+		return fmt.Sprintf("%*d", relativeNumWidth, 0)
+	}
+	if cursorIdx < 0 || cursorIdx >= len(rows) || rowIdx >= len(ordinals) || cursorIdx >= len(ordinals) {
+		return fmt.Sprintf("%*d", relativeNumWidth, abs(rowIdx-cursorIdx))
+	}
+	dist := abs(ordinals[rowIdx] - ordinals[cursorIdx])
+	return fmt.Sprintf("%*d", relativeNumWidth, dist)
+}
+
+func lineNumber(n int) string {
+	if n < 1 {
+		return ""
+	}
+	return fmt.Sprintf("%d", n)
+}
+
+func visibleWidth(s string) int {
+	return lipgloss.Width(s)
+}
+
+func fileListStart(selected, total, height int) int {
+	if total <= 0 || height <= 0 {
+		return 0
+	}
+	selected = clamp(0, total-1, selected)
+	if total <= height {
+		return 0
+	}
+	if selected < height {
+		return 0
+	}
+	return min(total-height, selected-height+1)
 }
 
 func replaceAt(s string, idx int, r rune) string {
@@ -526,16 +1239,6 @@ func truncate(s string, width int) string {
 	return string(rs[:width-1]) + "…"
 }
 
-func limit(lines []string, n int) []string {
-	if n < 0 {
-		return nil
-	}
-	if len(lines) <= n {
-		return lines
-	}
-	return lines[:n]
-}
-
 func clamp(lo, hi, v int) int {
 	if hi < lo {
 		return lo
@@ -561,4 +1264,22 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+func mod(a, b int) int {
+	if b == 0 {
+		return 0
+	}
+	r := a % b
+	if r < 0 {
+		return r + b
+	}
+	return r
 }

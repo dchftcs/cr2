@@ -31,10 +31,15 @@ bin/cr2 -o REVIEW.md
 
 | Key | Action |
 | --- | --- |
-| `j` / `k`, arrows | Move in the diff |
-| `PgUp` / `PgDn` | Page through the diff |
-| `g` / `G` | Jump to top/bottom |
-| `]` / `[` | Next/previous file |
+| `j` / `k`, arrows | Move in the diff; counts work, e.g. `5j` |
+| `Ctrl+d` / `Ctrl+u` | Move half a page down/up |
+| `PgUp` / `PgDn`, `Ctrl+b` / `Ctrl+f` | Page through the diff |
+| `g` / `G`, `Home` / `End` | Jump to top/bottom; count + `G` jumps to a source line |
+| `J` / `K`, `}` / `{` | Next/previous hunk |
+| `h` / `l`, `]` / `[`, left/right arrows | Previous/next file; counts work |
+| `/`, `n` / `N` | Search the diff and repeat next/previous match |
+| `Tab` | Toggle side-by-side/unified diff view |
+| `Ctrl+n` | Cycle line numbers between both, relative-only, and absolute-only |
 | `c` | Add inline comment at the selected line |
 | `R` | Edit general review comment |
 | `Ctrl+s` | Submit a comment while editing |

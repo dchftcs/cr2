@@ -36,10 +36,15 @@ go run ./cmd/cr --help
 
 The terminal UI is Bubble Tea based. It currently has a split file-list/diff view and supports:
 
-- `j` / `k`, arrows: move in the diff
-- `PgUp` / `PgDn`: page through the diff
-- `g` / `G`: jump to top/bottom
-- `]` / `[`: next/previous file
+- `j` / `k`, arrows: move in the diff; numeric counts work
+- `Ctrl+d` / `Ctrl+u`: move half a page down/up
+- `PgUp` / `PgDn`, `Ctrl+b` / `Ctrl+f`: page through the diff
+- `g` / `G`, `Home` / `End`: jump to top/bottom; count + `G` jumps to a source line
+- `J` / `K`, `}` / `{`: next/previous hunk
+- `h` / `l`, `]` / `[`: next/previous file; numeric counts work
+- `/`, `n` / `N`: search the diff and repeat next/previous match
+- `Tab`: toggle side-by-side/unified diff view
+- `Ctrl+n`: cycle line numbers between both, relative-only, and absolute-only
 - `c`: add an inline comment at the selected line
 - `R`: edit the review-level comment
 - `Ctrl+s`: submit comment while editing
@@ -55,4 +60,4 @@ Future UI work should improve ergonomics without moving git, diff parsing, or ex
 
 - The first implementation supports local git only.
 - There is no persistent review-session file format yet.
-- Side-by-side rendering, search, mouse support, and editor integration are intentionally deferred until the layered core is firmer.
+- Mouse support and editor integration are intentionally deferred until the layered core is firmer.
