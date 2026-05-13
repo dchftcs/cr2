@@ -24,6 +24,50 @@ go build ./cmd/cr
 go run ./cmd/cr --help
 ```
 
+## Dependency Policy
+
+Minimize external dependencies. At this stage the project should mainly use the Go standard library plus the Bubble Tea ecosystem needed for the terminal UI.
+
+When introducing any new external dependency:
+
+- Prefer the standard library first.
+- Reuse the existing Bubble Tea/Charmbracelet stack for TUI behavior instead of adding a second UI framework.
+- Add the dependency only when it removes substantial implementation risk or complexity.
+- Update this section with the new dependency, why it is needed, and whether it is direct or transitive.
+
+Direct external imports currently used by source code:
+
+- `github.com/charmbracelet/bubbletea`: Bubble Tea TUI runtime.
+- `github.com/charmbracelet/bubbles/textarea`: textarea component for comment editing.
+- `github.com/charmbracelet/lipgloss`: terminal styling.
+
+External modules currently listed in `go.mod`:
+
+- `github.com/atotto/clipboard`
+- `github.com/aymanbagabas/go-osc52/v2`
+- `github.com/charmbracelet/bubbles`
+- `github.com/charmbracelet/bubbletea`
+- `github.com/charmbracelet/colorprofile`
+- `github.com/charmbracelet/lipgloss`
+- `github.com/charmbracelet/x/ansi`
+- `github.com/charmbracelet/x/cellbuf`
+- `github.com/charmbracelet/x/term`
+- `github.com/clipperhouse/displaywidth`
+- `github.com/clipperhouse/stringish`
+- `github.com/clipperhouse/uax29/v2`
+- `github.com/erikgeiser/coninput`
+- `github.com/lucasb-eyer/go-colorful`
+- `github.com/mattn/go-isatty`
+- `github.com/mattn/go-localereader`
+- `github.com/mattn/go-runewidth`
+- `github.com/muesli/ansi`
+- `github.com/muesli/cancelreader`
+- `github.com/muesli/termenv`
+- `github.com/rivo/uniseg`
+- `github.com/xo/terminfo`
+- `golang.org/x/sys`
+- `golang.org/x/text`
+
 ## Design Rules
 
 - Keep git behavior behind repository adapters. Do not shell out to git from UI or export code.
