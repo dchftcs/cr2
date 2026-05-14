@@ -28,6 +28,18 @@ func ParseUnified(raw string) ([]domain.FileChange, error) {
 		case strings.HasPrefix(line, "diff --git "):
 			flushFile()
 			cur = &domain.FileChange{}
+		case strings.HasPrefix(line, "rename from "):
+			if cur == nil {
+				cur = &domain.FileChange{}
+			}
+			cur.OldPath = strings.TrimSpace(strings.TrimPrefix(line, "rename from "))
+			cur.Renamed = true
+		case strings.HasPrefix(line, "rename to "):
+			if cur == nil {
+				cur = &domain.FileChange{}
+			}
+			cur.NewPath = strings.TrimSpace(strings.TrimPrefix(line, "rename to "))
+			cur.Renamed = true
 		case strings.HasPrefix(line, "Binary files "):
 			if cur != nil {
 				cur.Binary = true

@@ -33,6 +33,7 @@ type FileChange struct {
 	Binary    bool
 	Untracked bool
 	Staged    bool
+	Renamed   bool
 }
 
 func (f FileChange) Path() string {

@@ -290,6 +290,72 @@ func TestPairLinesHandlesUnevenChanges(t *testing.T) {
 	}
 }
 
+func TestPureRenameShowsRenameHeaderWithoutHunks(t *testing.T) {
+	pure := domain.FileChange{OldPath: "old.go", NewPath: "new.go", Renamed: true}
+	m := model{
+		width:  100,
+		height: 40,
+		session: domain.NewReviewSession(domain.DiffContext{Left: "main", Right: "worktree"}, []domain.FileChange{pure}),
+	}
+	m.view = viewSideBySide
+
+	view := stripAnsi(m.diffView(100, 12))
+	if !strings.Contains(view, "old.go → new.go") {
+		t.Fatalf("pure rename header missing arrow: %q", view)
+	}
+	if !strings.Contains(view, "renamed from old.go") || !strings.Contains(view, "renamed to new.go") {
+		t.Fatalf("pure rename missing side labels: %q", view)
+	}
+	if !strings.Contains(view, "Pure rename") {
+		t.Fatalf("pure rename should explain absence of hunks: %q", view)
+	}
+
+	m.view = viewUnified
+	unifiedView := stripAnsi(m.diffView(100, 12))
+	if !strings.Contains(unifiedView, "old.go → new.go") {
+		t.Fatalf("unified pure rename header missing arrow: %q", unifiedView)
+	}
+	if !strings.Contains(unifiedView, "Pure rename") {
+		t.Fatalf("unified pure rename missing explanation: %q", unifiedView)
+	}
+}
+
+func TestRenamedFileShowsRenameAnnotations(t *testing.T) {
+	renamed := testFile("new.go")
+	renamed.OldPath = "old.go"
+	renamed.Renamed = true
+
+	m := model{
+		width:  100,
+		height: 40,
+		session: domain.NewReviewSession(domain.DiffContext{Left: "main", Right: "worktree"}, []domain.FileChange{renamed}),
+	}
+	m.view = viewSideBySide
+
+	view := stripAnsi(m.diffView(100, 12))
+	lines := strings.Split(view, "\n")
+	if len(lines) < 2 {
+		t.Fatalf("diff view lines = %d, want at least 2", len(lines))
+	}
+	if !strings.Contains(lines[0], "old.go → new.go") {
+		t.Fatalf("header missing rename arrow: %q", lines[0])
+	}
+	if !strings.Contains(lines[1], "renamed from old.go") || !strings.Contains(lines[1], "renamed to new.go") {
+		t.Fatalf("subheader missing rename labels: %q", lines[1])
+	}
+
+	m.view = viewUnified
+	unifiedLines := strings.Split(stripAnsi(m.diffView(100, 12)), "\n")
+	if !strings.Contains(unifiedLines[0], "old.go → new.go") {
+		t.Fatalf("unified header missing rename arrow: %q", unifiedLines[0])
+	}
+	for _, line := range unifiedLines {
+		if strings.Contains(line, "renamed from") {
+			t.Fatalf("unified view should not show side subheader, got %q", line)
+		}
+	}
+}
+
 func pressKeys(t *testing.T, m model, keys ...string) model {
 	t.Helper()
 	for _, key := range keys {

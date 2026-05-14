@@ -87,25 +87,37 @@ func (m model) diffView(width, height int) string {
 	}
 	f, _ := m.currentFile()
 	rows := m.rows()
+	rowW := max(1, width-2)
+	header := truncate(fileHeaderText(f), rowW)
+	if m.view == viewSideBySide {
+		header += "  " + statusStyle.Render("(before │ after)")
+	}
+	showRelative := m.showRelativeLineNums()
+	out := []string{headerStyle.Render(header)}
+	if f.Renamed && m.view == viewSideBySide {
+		relW := 0
+		if showRelative {
+			relW = relativeNumWidth + 1
+		}
+		out = append(out, renderRenameSubheader(f, rowW, relW))
+	}
 	if len(rows) == 0 {
-		return f.Path() + "\nNo textual diff."
+		if f.Renamed {
+			out = append(out, statusStyle.Render("Pure rename — no textual diff."))
+		} else {
+			out = append(out, "No textual diff.")
+		}
+		return strings.Join(out, "\n")
 	}
 	m.ensureCursorVisible()
 	start := clamp(0, max(0, len(rows)-1), m.scroll)
 	end := min(len(rows), start+height-2)
-	rowW := max(1, width-2)
-	header := truncate(f.Path(), rowW)
-	if m.view == viewSideBySide {
-		header += "  " + statusStyle.Render("(before │ after)")
-	}
 	numW := absoluteLineNumberWidth(f)
-	showRelative := m.showRelativeLineNums()
 	showAbsolute := m.showAbsoluteLineNums()
 	var ordinals []int
 	if showRelative {
 		ordinals = rowOrdinals(rows)
 	}
-	out := []string{headerStyle.Render(header)}
 	for i := start; i < end; i++ {
 		relPrefix := ""
 		if showRelative {

@@ -28,7 +28,7 @@ func (Local) Capabilities() domain.Capabilities {
 func (r Local) Diff(ctx context.Context, spec reviewapp.DiffSpec) (string, error) {
 	switch spec.Mode {
 	case reviewapp.DiffUnstaged:
-		base, err := r.git(ctx, "diff")
+		base, err := r.git(ctx, "diff", "-M")
 		if err != nil {
 			return "", err
 		}
@@ -49,7 +49,7 @@ func (r Local) Diff(ctx context.Context, spec reviewapp.DiffSpec) (string, error
 			}
 			mergeBase = strings.TrimSpace(mergeBase)
 			if parts[1] == "HEAD" {
-				base, err := r.git(ctx, "diff", mergeBase)
+				base, err := r.git(ctx, "diff", "-M", mergeBase)
 				if err != nil {
 					return "", err
 				}
@@ -59,12 +59,12 @@ func (r Local) Diff(ctx context.Context, spec reviewapp.DiffSpec) (string, error
 				}
 				return joinDiffs(base, untracked), nil
 			}
-			return r.git(ctx, "diff", mergeBase, parts[1])
+			return r.git(ctx, "diff", "-M", mergeBase, parts[1])
 		}
 		if strings.Contains(spec.RevSpec, "..") {
-			return r.git(ctx, "diff", spec.RevSpec)
+			return r.git(ctx, "diff", "-M", spec.RevSpec)
 		}
-		return r.git(ctx, "show", "--format=", spec.RevSpec)
+		return r.git(ctx, "show", "-M", "--format=", spec.RevSpec)
 	default:
 		hasCommits, err := r.HasCommits(ctx)
 		if err != nil {
@@ -73,7 +73,7 @@ func (r Local) Diff(ctx context.Context, spec reviewapp.DiffSpec) (string, error
 		if !hasCommits {
 			return r.unbornWorkingTreeDiff(ctx)
 		}
-		base, err := r.git(ctx, "diff", "HEAD")
+		base, err := r.git(ctx, "diff", "-M", "HEAD")
 		if err != nil {
 			return "", err
 		}
@@ -153,11 +153,11 @@ func (r Local) CurrentBranch(ctx context.Context) (string, error) {
 }
 
 func (r Local) unbornWorkingTreeDiff(ctx context.Context) (string, error) {
-	staged, err := r.git(ctx, "diff", "--cached", "--root")
+	staged, err := r.git(ctx, "diff", "-M", "--cached", "--root")
 	if err != nil {
 		return "", err
 	}
-	unstaged, err := r.git(ctx, "diff")
+	unstaged, err := r.git(ctx, "diff", "-M")
 	if err != nil {
 		return "", err
 	}

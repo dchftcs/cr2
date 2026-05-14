@@ -83,6 +83,24 @@ func renderTextRow(row diffRow, width, numW int, showAbsolute bool, sideBySide b
 	return line
 }
 
+func fileHeaderText(f domain.FileChange) string {
+	if f.Renamed && f.OldPath != "" && f.NewPath != "" && f.OldPath != f.NewPath {
+		return f.OldPath + " → " + f.NewPath
+	}
+	return f.Path()
+}
+
+func renderRenameSubheader(f domain.FileChange, width, relW int) string {
+	sep := statusStyle.Render("│")
+	columnBudget := max(2, width-1-(2*relW))
+	leftW := max(1, columnBudget/2)
+	rightW := max(1, columnBudget-leftW)
+	relPad := strings.Repeat(" ", relW)
+	left := padOrTruncate("renamed from "+f.OldPath, leftW)
+	right := padOrTruncate("renamed to "+f.NewPath, rightW)
+	return relPad + statusStyle.Render(left) + sep + relPad + statusStyle.Render(right)
+}
+
 func renderPair(row diffRow, width, numW int, showAbsolute bool, relPrefix string) string {
 	sep := statusStyle.Render("│")
 	relW := visibleWidth(relPrefix)
