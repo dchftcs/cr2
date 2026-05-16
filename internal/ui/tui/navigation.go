@@ -3,7 +3,6 @@ package tui
 import (
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/dc/cr2/internal/domain"
 )
 
@@ -177,9 +176,7 @@ func (m *model) ensureInlineEditorVisible() {
 }
 
 func (m model) diffHeight() int {
-	headerHeight := lipgloss.Height(m.header())
-	bodyHeight := max(6, m.height-headerHeight-2)
-	return max(1, bodyHeight-2)
+	return max(1, m.computeLayout().diffRows.h)
 }
 
 func (m model) pageStep() int {

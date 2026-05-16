@@ -47,13 +47,13 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "k", "up":
 		m.moveCursor(-count)
 	case "pgdown", "ctrl+f", " ":
-		m.moveCursor(count * m.pageStep())
+		m.scrollDiff(count * m.pageStep())
 	case "pgup", "ctrl+b":
-		m.moveCursor(-count * m.pageStep())
+		m.scrollDiff(-count * m.pageStep())
 	case "ctrl+d":
-		m.moveCursor(count * m.halfPageStep())
+		m.scrollDiff(count * m.halfPageStep())
 	case "ctrl+u":
-		m.moveCursor(-count * m.halfPageStep())
+		m.scrollDiff(-count * m.halfPageStep())
 	case "G":
 		if hasCount {
 			m.jumpToLine(count)

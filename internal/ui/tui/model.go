@@ -97,6 +97,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.session = msg.session
 		m.status = "Toggled stage state for " + msg.path
 		return m, nil
+	case tea.MouseMsg:
+		return m.updateMouse(msg)
 	case tea.KeyMsg:
 		switch m.mode {
 		case modeComment:

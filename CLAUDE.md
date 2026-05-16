@@ -98,6 +98,8 @@ The terminal UI is Bubble Tea based. It currently has a split file-list/diff vie
 - `s`: save review and exit
 - `?`: help
 - `q`: quit without saving
+- mouse click: focus a file in the list or a row in the diff
+- mouse wheel: scroll the diff (right pane) or step through the file list (left pane)
 
 Future UI work should improve ergonomics without moving git, diff parsing, or export logic into the UI layer.
 
@@ -105,4 +107,4 @@ Future UI work should improve ergonomics without moving git, diff parsing, or ex
 
 - The first implementation supports local git only.
 - There is no persistent review-session file format yet.
-- Mouse support and editor integration are intentionally deferred until the layered core is firmer.
+- Editor integration is intentionally deferred until the layered core is firmer.

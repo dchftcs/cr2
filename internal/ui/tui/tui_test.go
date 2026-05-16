@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/dc/cr2/internal/domain"
 )
 
@@ -354,6 +355,195 @@ func TestRenamedFileShowsRenameAnnotations(t *testing.T) {
 			t.Fatalf("unified view should not show side subheader, got %q", line)
 		}
 	}
+}
+
+func TestPageScrollsAreViewportOnly(t *testing.T) {
+	// Page and half-page keys move the viewport without moving the cursor —
+	// same semantics as mouse wheel. Cursor may leave the viewport.
+	for _, key := range []string{"ctrl+f", "pgdown", "ctrl+d"} {
+		m := testModel()
+		m.view = viewUnified
+		m.height = 10
+		before := m.cursor
+		m = pressKeys(t, m, key)
+		if m.cursor != before {
+			t.Fatalf("%s moved cursor from %d to %d, want viewport-only scroll", key, before, m.cursor)
+		}
+		if m.scroll == 0 {
+			t.Fatalf("%s should advance scroll, got scroll=%d", key, m.scroll)
+		}
+	}
+}
+
+func TestMouseWheelScrollsDiff(t *testing.T) {
+	m := testModel()
+	m.view = viewUnified
+	m.height = 10 // shrink so the diff actually has room to scroll
+
+	next, _ := m.Update(mouseMsg(50, 5, tea.MouseButtonWheelDown, tea.MouseActionPress))
+	got, ok := next.(model)
+	if !ok {
+		t.Fatalf("Update returned %T", next)
+	}
+	if got.scroll != wheelStepDiff {
+		t.Fatalf("scroll after wheel down = %d, want %d", got.scroll, wheelStepDiff)
+	}
+	if got.cursor != 0 {
+		t.Fatalf("wheel should not move the cursor, cursor = %d", got.cursor)
+	}
+
+	next, _ = got.Update(mouseMsg(50, 5, tea.MouseButtonWheelUp, tea.MouseActionPress))
+	got = next.(model)
+	if got.scroll != 0 {
+		t.Fatalf("scroll after wheel up = %d, want 0", got.scroll)
+	}
+}
+
+func TestMouseWheelMovesFileSelection(t *testing.T) {
+	m := testModel()
+
+	next, _ := m.Update(mouseMsg(10, 5, tea.MouseButtonWheelDown, tea.MouseActionPress))
+	got, ok := next.(model)
+	if !ok {
+		t.Fatalf("Update returned %T", next)
+	}
+	if got.selected != 1 {
+		t.Fatalf("selected after wheel down on file list = %d, want 1", got.selected)
+	}
+
+	next, _ = got.Update(mouseMsg(10, 5, tea.MouseButtonWheelUp, tea.MouseActionPress))
+	got = next.(model)
+	if got.selected != 0 {
+		t.Fatalf("selected after wheel up on file list = %d, want 0", got.selected)
+	}
+}
+
+func TestMouseClickSelectsFile(t *testing.T) {
+	m := testModel()
+
+	// File list: bodyContentTopY=2, no scroll, so y=4 maps to file index 2.
+	next, _ := m.Update(mouseMsg(10, 4, tea.MouseButtonLeft, tea.MouseActionPress))
+	got, ok := next.(model)
+	if !ok {
+		t.Fatalf("Update returned %T", next)
+	}
+	if got.selected != 2 {
+		t.Fatalf("selected after click = %d, want 2", got.selected)
+	}
+	if got.cursor != 0 || got.scroll != 0 {
+		t.Fatalf("file change should reset cursor/scroll, cursor=%d scroll=%d", got.cursor, got.scroll)
+	}
+}
+
+func TestMouseClickMovesDiffCursor(t *testing.T) {
+	m := testModel()
+	m.view = viewUnified
+
+	// Right panel: y=2 is the file-header row, y=3 is diff row 0.
+	next, _ := m.Update(mouseMsg(50, 4, tea.MouseButtonLeft, tea.MouseActionPress))
+	got, ok := next.(model)
+	if !ok {
+		t.Fatalf("Update returned %T", next)
+	}
+	if got.cursor != 1 {
+		t.Fatalf("cursor after click = %d, want 1", got.cursor)
+	}
+}
+
+func TestWorkspaceViewFitsTerminalHeight(t *testing.T) {
+	// The workspace view (header + bordered panels + footer) must not
+	// exceed m.height — otherwise bubbletea drops the top row, the layout
+	// shifts up, and every mouse click is off by 1 row vertically.
+	for _, h := range []int{20, 24, 40, 60} {
+		m := testModel()
+		m.height = h
+		got := lipgloss.Height(m.workspaceView())
+		if got > h {
+			t.Fatalf("workspaceView height = %d for terminal height %d, want <= %d", got, h, h)
+		}
+	}
+}
+
+func TestLayoutRegionsTileWorkspaceWithoutGaps(t *testing.T) {
+	// Hit-testing relies on the layout rectangles tiling the workspace: the
+	// header sits flush above the panels, panels share an edge, and the
+	// footer is the last row. If any region drifts, mouse clicks at the
+	// seam between regions are silently dropped.
+	for _, h := range []int{20, 24, 40, 60} {
+		m := testModel()
+		m.view = viewUnified
+		m.height = h
+		l := m.computeLayout()
+
+		if l.header.y != 0 || l.header.x != 0 {
+			t.Fatalf("h=%d header should start at origin, got (%d,%d)", h, l.header.x, l.header.y)
+		}
+		if l.fileListPanel.y != l.header.y+l.header.h {
+			t.Fatalf("h=%d fileListPanel.y=%d, want %d (right below header)", h, l.fileListPanel.y, l.header.y+l.header.h)
+		}
+		if l.diffPanel.y != l.fileListPanel.y || l.diffPanel.h != l.fileListPanel.h {
+			t.Fatalf("h=%d panels not vertically aligned: file=%+v diff=%+v", h, l.fileListPanel, l.diffPanel)
+		}
+		if l.diffPanel.x != l.fileListPanel.x+l.fileListPanel.w {
+			t.Fatalf("h=%d diffPanel.x=%d, want %d (right after fileListPanel)", h, l.diffPanel.x, l.fileListPanel.x+l.fileListPanel.w)
+		}
+		if got := l.fileListPanel.w + l.diffPanel.w; got != m.width {
+			t.Fatalf("h=%d panel widths sum to %d, want %d", h, got, m.width)
+		}
+		if l.footer.y+l.footer.h != m.height {
+			t.Fatalf("h=%d footer ends at %d, want %d", h, l.footer.y+l.footer.h, m.height)
+		}
+		if l.diffRows.y != l.diffHeader.y+l.diffHeader.h {
+			t.Fatalf("h=%d diffRows.y=%d, want %d (right below diffHeader)", h, l.diffRows.y, l.diffHeader.y+l.diffHeader.h)
+		}
+	}
+}
+
+func TestLayoutContains(t *testing.T) {
+	m := testModel()
+	m.view = viewUnified
+	l := m.computeLayout()
+
+	// The first file-list content row should be inside fileListItems but
+	// outside diffRows, and vice versa for the first diff row.
+	firstFileX := l.fileListItems.x + 1
+	firstFileY := l.fileListItems.y
+	if !l.fileListItems.contains(firstFileX, firstFileY) {
+		t.Fatalf("fileListItems should contain (%d,%d): %+v", firstFileX, firstFileY, l.fileListItems)
+	}
+	if l.diffRows.contains(firstFileX, firstFileY) {
+		t.Fatalf("diffRows should not contain (%d,%d): %+v", firstFileX, firstFileY, l.diffRows)
+	}
+
+	firstDiffX := l.diffRows.x + 1
+	firstDiffY := l.diffRows.y
+	if !l.diffRows.contains(firstDiffX, firstDiffY) {
+		t.Fatalf("diffRows should contain (%d,%d): %+v", firstDiffX, firstDiffY, l.diffRows)
+	}
+	if l.fileListItems.contains(firstDiffX, firstDiffY) {
+		t.Fatalf("fileListItems should not contain (%d,%d): %+v", firstDiffX, firstDiffY, l.fileListItems)
+	}
+}
+
+func TestMouseIgnoredInNonNormalMode(t *testing.T) {
+	m := testModel()
+	m.view = viewUnified
+	m.height = 10
+	m.mode = modeHelp
+
+	next, _ := m.Update(mouseMsg(50, 5, tea.MouseButtonWheelDown, tea.MouseActionPress))
+	got, ok := next.(model)
+	if !ok {
+		t.Fatalf("Update returned %T", next)
+	}
+	if got.scroll != 0 || got.selected != 0 || got.cursor != 0 {
+		t.Fatalf("help mode should ignore mouse, scroll=%d selected=%d cursor=%d",
+			got.scroll, got.selected, got.cursor)
+	}
+}
+
+func mouseMsg(x, y int, button tea.MouseButton, action tea.MouseAction) tea.MouseMsg {
+	return tea.MouseMsg(tea.MouseEvent{X: x, Y: y, Button: button, Action: action})
 }
 
 func pressKeys(t *testing.T, m model, keys ...string) model {

@@ -21,17 +21,19 @@ func (m model) View() string {
 }
 
 func (m model) workspaceView() string {
-	header := m.header()
-	bodyHeight := max(6, m.height-lipgloss.Height(header)-2)
+	l := m.computeLayout()
+	leftW := l.fileListItems.w
+	rightW := l.diffContent.w
+	bodyHeight := l.fileListItems.h
 	if m.mode == modeGeneral {
-		bodyHeight = max(6, bodyHeight-lipgloss.Height(m.generalCommentView()))
+		// Shrink the panel bodies to leave room for the general-comment overlay.
+		// This is a render-only adjustment; mouse is disabled in modeGeneral.
+		bodyHeight = max(minPanelContentHeight, bodyHeight-lipgloss.Height(m.generalCommentView()))
 	}
-	leftWidth := clamp(28, 44, max(28, m.width/3))
-	rightWidth := max(20, m.width-leftWidth-4)
-	left := panelStyle.Width(leftWidth).Height(bodyHeight).Render(m.fileListView(leftWidth, bodyHeight))
-	right := panelStyle.Width(rightWidth).Height(bodyHeight).Render(m.diffView(rightWidth, bodyHeight))
+	left := panelStyle.Width(leftW).Height(bodyHeight).Render(m.fileListView(leftW, bodyHeight))
+	right := panelStyle.Width(rightW).Height(bodyHeight).Render(m.diffView(rightW, bodyHeight))
 	footer := statusStyle.Render(m.footer())
-	return lipgloss.JoinVertical(lipgloss.Left, header, lipgloss.JoinHorizontal(lipgloss.Top, left, right), footer)
+	return lipgloss.JoinVertical(lipgloss.Left, m.header(), lipgloss.JoinHorizontal(lipgloss.Top, left, right), footer)
 }
 
 func (m model) header() string {
@@ -109,7 +111,6 @@ func (m model) diffView(width, height int) string {
 		}
 		return strings.Join(out, "\n")
 	}
-	m.ensureCursorVisible()
 	start := clamp(0, max(0, len(rows)-1), m.scroll)
 	end := min(len(rows), start+height-2)
 	numW := absoluteLineNumberWidth(f)
@@ -161,6 +162,8 @@ R                  edit general review comment
 ctrl+s             submit comment while editing
 m                  mark selected file read/unread
 a                  stage/unstage selected file
+mouse click        focus a file or diff row
+mouse wheel        scroll diff / step through file list
 s                  save review and exit
 q                  quit without saving
 ?                  close help`)

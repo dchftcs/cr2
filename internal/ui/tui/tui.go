@@ -31,7 +31,7 @@ func (ui UI) Run(ctx context.Context) error {
 		return err
 	}
 	m := newModel(ctx, ui.app, session, ui.opts)
-	final, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
+	final, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
 	if err != nil {
 		return err
 	}
