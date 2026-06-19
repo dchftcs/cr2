@@ -202,6 +202,39 @@ func (m model) currentLine() int {
 	return rows[m.cursor].lineNum
 }
 
+// snapCursorToSource moves the cursor to the nearest source row when it's
+// currently sitting on a non-source row (hunk header or comment row). Returns
+// false if the file has no source rows at all (e.g. pure rename, binary).
+func (m *model) snapCursorToSource() bool {
+	rows := m.rows()
+	if len(rows) == 0 {
+		return false
+	}
+	if m.cursor < 0 {
+		m.cursor = 0
+	} else if m.cursor >= len(rows) {
+		m.cursor = len(rows) - 1
+	}
+	if rows[m.cursor].isSource() {
+		return true
+	}
+	for i := m.cursor + 1; i < len(rows); i++ {
+		if rows[i].isSource() {
+			m.cursor = i
+			m.ensureCursorVisible()
+			return true
+		}
+	}
+	for i := m.cursor - 1; i >= 0; i-- {
+		if rows[i].isSource() {
+			m.cursor = i
+			m.ensureCursorVisible()
+			return true
+		}
+	}
+	return false
+}
+
 func (m model) currentSourceLine() (int, bool) {
 	rows := m.rows()
 	if m.cursor < 0 || m.cursor >= len(rows) || !rows[m.cursor].isSource() || rows[m.cursor].lineNum < 1 {

@@ -110,6 +110,10 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "c":
 		if f, ok := m.currentFile(); ok {
+			if !m.snapCursorToSource() {
+				m.status = "No source lines to comment on"
+				return m, nil
+			}
 			anchor, ok := m.currentCommentAnchor(f.Path())
 			if !ok {
 				m.status = "Select a source line before commenting"
